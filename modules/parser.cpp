@@ -19,6 +19,8 @@ module;
 
 export module parser;
 
+import deserializer;
+
 namespace wrpl {
 
   enum class packet_type : std::uint8_t {
@@ -366,6 +368,22 @@ private:
           std::span<const std::byte> payload_bytes = payload_stream.remaining_bytes();
           std::size_t payload_size_actual = payload_bytes.size();
           std::println("  Actual Payload Size: {} bytes", payload_size_actual);
+
+          if (static_cast<packet_type>(header_result->packet_type_val) == packet_type::chat) {
+            auto chat_result = deserialize_chat(payload_bytes);
+            if (chat_result) {
+              std::println(
+                "  Chat Sender='{}', Message='{}', IsEnemy={}, Channel={}, UnreadBits={}",
+                chat_result->sender_name, chat_result->message,
+                chat_result->is_enemy ? "true" : "false", chat_result->channel_id,
+                (payload_bytes.size() * 8) - chat_result->bits_read
+              );
+            } else {
+              std::println(
+                "  Failed to deserialize chat packet: {}", chat_result.error().message()
+              );
+            }
+          }
           if (static_cast<packet_type>(header_result->packet_type_val) == packet_type::mpi &&
               payload_size_actual >= 4) {
             std::uint16_t obj_id, msg_id;

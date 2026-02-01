@@ -9,6 +9,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_subdirectory(vendor/zlib)
+add_subdirectory(vendor/dagutils)
 
 add_executable(${PROJECT_NAME}
   src/main.cpp
@@ -16,10 +17,12 @@ add_executable(${PROJECT_NAME}
 
 target_sources(${PROJECT_NAME} PUBLIC FILE_SET CXX_MODULES FILES
   modules/parser.cpp
+  modules/deserializer.cpp
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   zlib
+  dagutils
 )
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
