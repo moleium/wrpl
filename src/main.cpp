@@ -14,10 +14,10 @@ import parser;
 
 std::optional<std::string_view> find_stream(std::string_view file_data) {
   constexpr std::array<std::string_view, 3> possible_headers = {
-      std::string_view{"\x78\x01"}, std::string_view{"\x78\x9C"},
-      std::string_view{"\x78\xDA"}};
+    std::string_view{"\x78\x01"}, std::string_view{"\x78\x9C"}, std::string_view{"\x78\xDA"}
+  };
 
-  for (const auto &header : possible_headers) {
+  for (const auto& header : possible_headers) {
     if (size_t pos = file_data.find(header); pos != std::string_view::npos) {
       return file_data.substr(pos);
     }
@@ -26,7 +26,7 @@ std::optional<std::string_view> find_stream(std::string_view file_data) {
   return std::nullopt;
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
   if (argc != 2) {
     std::println(stderr, "Usage: {} <path_wrpl>", argv[0]);
     return 1;
@@ -49,8 +49,7 @@ int main(int argc, char *argv[]) {
     file.seekg(0, std::ios::beg);
     std::vector<char> buffer(size);
     if (!file.read(buffer.data(), size)) {
-      std::println(stderr, "Could not read file content from {}",
-                   wrpl_path.string());
+      std::println(stderr, "Could not read file content from {}", wrpl_path.string());
       return 1;
     }
 
@@ -63,8 +62,10 @@ int main(int argc, char *argv[]) {
       return 1;
     }
 
-    std::println("Found zlib stream at offset {}. Size: {} bytes",
-                 zlib_data->data() - file_content.data(), zlib_data->size());
+    std::println(
+      "Found zlib stream at offset {}. Size: {} bytes", zlib_data->data() - file_content.data(),
+      zlib_data->size()
+    );
 
     std::stringstream zlib_stream;
     zlib_stream.write(zlib_data->data(), zlib_data->size());
@@ -72,7 +73,7 @@ int main(int argc, char *argv[]) {
 
     wrpl::process_stream(zlib_stream);
 
-  } catch (const std::exception &e) {
+  } catch (const std::exception& e) {
     std::println(stderr, "An unexpected error: {}", e.what());
     return 1;
   }
