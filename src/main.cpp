@@ -1,7 +1,7 @@
 #include <print>
 
-#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -13,16 +13,18 @@
 import parser;
 
 std::optional<std::string_view> find_stream(std::string_view file_data) {
-  constexpr std::array<std::string_view, 3> possible_headers = {
-    std::string_view{"\x78\x01"}, std::string_view{"\x78\x9C"}, std::string_view{"\x78\xDA"}
-  };
+  constexpr std::size_t replay_header_size = 0x4C6;
+  if (file_data.size() < replay_header_size + 2)
+    return std::nullopt;
 
-  for (const auto& header : possible_headers) {
-    if (size_t pos = file_data.find(header); pos != std::string_view::npos) {
-      return file_data.substr(pos);
+  for (std::size_t i = replay_header_size; i + 1 < file_data.size(); ++i) {
+    auto cmf = static_cast<std::uint8_t>(file_data[i]);
+    auto flg = static_cast<std::uint8_t>(file_data[i + 1]);
+    // rfc 1950 2.2: CM=8 (deflate), CINFO=7, checksum valid
+    if (cmf == 0x78 && (cmf * 256u + flg) % 31 == 0) {
+      return file_data.substr(i);
     }
   }
-
   return std::nullopt;
 }
 
