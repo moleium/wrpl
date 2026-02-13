@@ -16,6 +16,7 @@ module;
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "packets.hpp"
 
 export module parser;
 
@@ -384,20 +385,25 @@ private:
               );
             }
           }
-          if (static_cast<packet_type>(header_result->packet_type_val) == packet_type::mpi &&
-              payload_size_actual >= 4) {
-            std::uint16_t obj_id, msg_id;
-            std::memcpy(&obj_id, payload_bytes.data(), sizeof(obj_id));
-            std::memcpy(&msg_id, payload_bytes.data() + 2, sizeof(msg_id));
-            if constexpr (std::endian::native == std::endian::big) {
-              obj_id = std::byteswap(obj_id);
-              msg_id = std::byteswap(msg_id);
+          if (static_cast<packet_type>(header_result->packet_type_val) == packet_type::mpi) {
+            if (payload_size_actual >= 5) {
+              std::uint16_t obj_id, msg_id;
+              std::uint8_t skipped_byte;
+              std::memcpy(&obj_id, payload_bytes.data(), sizeof(obj_id));
+              std::memcpy(&skipped_byte, payload_bytes.data() + 2, sizeof(skipped_byte));
+              std::memcpy(&msg_id, payload_bytes.data() + 3, sizeof(msg_id));
+              if constexpr (std::endian::native == std::endian::big) {
+                obj_id = std::byteswap(obj_id);
+                msg_id = std::byteswap(msg_id);
+              }
+              std::println(
+                "  MPI Header:      ObjectID=0x{:04X}, MessageID=0x{:04X} ({})", obj_id, msg_id,
+                packet_ids::get_name(msg_id).value_or("Unknown")
+              );
+
+              payload_bytes = payload_bytes.subspan(5);
+              payload_size_actual -= 5;
             }
-            std::println(
-              "  MPI Header:      ObjectID=0x{:04X}, MessageID=0x{:04X}", obj_id, msg_id
-            );
-            payload_bytes = payload_bytes.subspan(4);
-            payload_size_actual -= 4;
           }
           if (payload_size_actual > 0) {
             std::print("  Payload Hex: ");
