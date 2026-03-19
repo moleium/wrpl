@@ -1,5 +1,6 @@
 module;
 
+#include <bitstream/bitstream.h>
 #include <print>
 #include <zlib.h>
 
@@ -59,6 +60,68 @@ namespace wrpl {
       default:
         return std::format("unknown ({})", type_val);
     }
+  }
+
+  bool is_wrapped_mpi_id(std::uint16_t message_id) {
+    const std::uint8_t low_byte = static_cast<std::uint8_t>(message_id & 0xFF);
+    return low_byte == 0x81 || low_byte == 0x82;
+  }
+
+  std::optional<std::uint16_t> read_u16_le(std::span<const std::byte> bytes, std::size_t offset) {
+    if (bytes.size() < offset + sizeof(std::uint16_t)) {
+      return std::nullopt;
+    }
+
+    const std::uint8_t* p = reinterpret_cast<const std::uint8_t*>(bytes.data()) + offset;
+    return static_cast<std::uint16_t>(p[0]) | (static_cast<std::uint16_t>(p[1]) << 8);
+  }
+
+  enum class mpi_id_state : std::uint8_t {
+    known_outer,
+    wrapped_effective_known,
+    unknown,
+  };
+
+  struct mpi_id_info {
+    std::uint16_t outer_id;
+    std::optional<std::string_view> outer_name;
+    std::uint16_t effective_id;
+    std::optional<std::string_view> effective_name;
+    mpi_id_state state;
+  };
+
+  mpi_id_info resolve_mpi_id(std::uint16_t outer_id, std::span<const std::byte> mpi_payload) {
+    mpi_id_info resolution{
+      .outer_id = outer_id,
+      .outer_name = packet_ids::get_name(outer_id),
+      .effective_id = outer_id,
+      .effective_name = packet_ids::get_name(outer_id),
+      .state = mpi_id_state::unknown,
+    };
+
+    if (resolution.outer_name.has_value()) {
+      resolution.state = mpi_id_state::known_outer;
+      return resolution;
+    }
+
+    if (!is_wrapped_mpi_id(outer_id)) {
+      return resolution;
+    }
+
+    std::optional<std::uint16_t> nested_msg_id = read_u16_le(mpi_payload, 1);
+    if (!nested_msg_id) {
+      return resolution;
+    }
+
+    std::optional<std::string_view> nested_msg_name = packet_ids::get_name(*nested_msg_id);
+    if (!nested_msg_name) {
+      return resolution;
+    }
+
+    resolution.effective_id = *nested_msg_id;
+    resolution.effective_name = nested_msg_name;
+    resolution.state = mpi_id_state::wrapped_effective_known;
+    return resolution;
   }
 
   class byte_stream_reader {
@@ -268,19 +331,25 @@ private:
 
   std::optional<packet_header_result>
   read_packet_header_from_stream(byte_stream_reader& data_stream, std::uint32_t last_timestamp_ms) {
-    std::span<const std::byte> first_byte_data = data_stream.read(1);
-    if (first_byte_data.empty()) {
+    std::span<const std::byte> type_bytes = data_stream.read(2);
+    if (type_bytes.size() < 2) {
       return std::nullopt;
     }
-    std::uint8_t first_byte = static_cast<std::uint8_t>(first_byte_data[0]);
-    std::size_t bytes_read_for_header = 1;
+    std::uint16_t packet_type_word = 0;
+    std::memcpy(&packet_type_word, type_bytes.data(), sizeof(packet_type_word));
+    if constexpr (std::endian::native == std::endian::big) {
+      packet_type_word = std::byteswap(packet_type_word);
+    }
+
+    std::size_t bytes_read_for_header = 2;
     std::uint32_t timestamp_ms = last_timestamp_ms;
     std::uint8_t packet_type_val = 0;
 
-    if ((first_byte & 0x10) != 0) {
-      packet_type_val = first_byte ^ 0x10;
+    if ((packet_type_word & 0x10) != 0) {
+      packet_type_word ^= 0x10;
+      packet_type_val = static_cast<std::uint8_t>(packet_type_word & 0xFF);
     } else {
-      packet_type_val = first_byte;
+      packet_type_val = static_cast<std::uint8_t>(packet_type_word & 0xFF);
       std::span<const std::byte> ts_bytes = data_stream.read(4);
       if (ts_bytes.size() < 4) {
         std::println("Warning: Unexpected EOF reading timestamp after type byte.");
@@ -386,23 +455,46 @@ private:
             }
           }
           if (static_cast<packet_type>(header_result->packet_type_val) == packet_type::mpi) {
-            if (payload_size_actual >= 5) {
-              std::uint16_t obj_id, msg_id;
-              std::uint8_t skipped_byte;
-              std::memcpy(&obj_id, payload_bytes.data(), sizeof(obj_id));
-              std::memcpy(&skipped_byte, payload_bytes.data() + 2, sizeof(skipped_byte));
-              std::memcpy(&msg_id, payload_bytes.data() + 3, sizeof(msg_id));
-              if constexpr (std::endian::native == std::endian::big) {
-                obj_id = std::byteswap(obj_id);
-                msg_id = std::byteswap(msg_id);
-              }
-              std::println(
-                "  MPI Header:      ObjectID=0x{:04X}, MessageID=0x{:04X} ({})", obj_id, msg_id,
-                packet_ids::get_name(msg_id).value_or("Unknown")
+            if (payload_size_actual >= 4) {
+              danet::BitStream mpi_stream(
+                reinterpret_cast<const std::uint8_t*>(payload_bytes.data()), payload_size_actual,
+                false
               );
+              std::uint8_t obj_id_bits[2] = {0, 0};
+              std::uint8_t msg_id_bits[2] = {0, 0};
 
-              payload_bytes = payload_bytes.subspan(5);
-              payload_size_actual -= 5;
+              if (mpi_stream.ReadBits(obj_id_bits, 0x10u) &&
+                  mpi_stream.ReadBits(msg_id_bits, 0x10u)) {
+                std::uint16_t obj_id = 0;
+                std::uint16_t msg_id = 0;
+                std::memcpy(&obj_id, obj_id_bits, sizeof(obj_id));
+                std::memcpy(&msg_id, msg_id_bits, sizeof(msg_id));
+                if constexpr (std::endian::native == std::endian::big) {
+                  obj_id = std::byteswap(obj_id);
+                  msg_id = std::byteswap(msg_id);
+                }
+                std::span<const std::byte> mpi_payload = payload_bytes.subspan(4);
+                mpi_id_info resolution = resolve_mpi_id(msg_id, mpi_payload);
+
+                if (resolution.state == mpi_id_state::wrapped_effective_known) {
+                  std::println(
+                    "  MPI Header:      ObjectID=0x{:04X}, MessageID=0x{:04X} ({}) -> "
+                    "Effective=0x{:04X} ({})",
+                    obj_id, resolution.outer_id, resolution.outer_name.value_or("Unknown"),
+                    resolution.effective_id, resolution.effective_name.value_or("Unknown")
+                  );
+                } else {
+                  std::println(
+                    "  MPI Header:      ObjectID=0x{:04X}, MessageID=0x{:04X} ({})", obj_id, msg_id,
+                    resolution.outer_name.value_or("Unknown")
+                  );
+                }
+              } else {
+                std::println("  MPI Header:      failed to read object/message ids");
+              }
+
+              payload_bytes = payload_bytes.subspan(4);
+              payload_size_actual -= 4;
             }
           }
           if (payload_size_actual > 0) {
