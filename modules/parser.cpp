@@ -440,19 +440,7 @@ private:
           std::println("  Actual Payload Size: {} bytes", payload_size_actual);
 
           if (static_cast<packet_type>(header_result->packet_type_val) == packet_type::chat) {
-            auto chat_result = deserialize_chat(payload_bytes);
-            if (chat_result) {
-              std::println(
-                "  Chat Sender='{}', Message='{}', IsEnemy={}, Channel={}, UnreadBits={}",
-                chat_result->sender_name, chat_result->message,
-                chat_result->is_enemy ? "true" : "false", chat_result->channel_id,
-                (payload_bytes.size() * 8) - chat_result->bits_read
-              );
-            } else {
-              std::println(
-                "  Failed to deserialize chat packet: {}", chat_result.error().message()
-              );
-            }
+            print_chat_packet(payload_bytes);
           }
           if (static_cast<packet_type>(header_result->packet_type_val) == packet_type::mpi) {
             if (payload_size_actual >= 4) {
@@ -488,6 +476,10 @@ private:
                     "  MPI Header:      ObjectID=0x{:04X}, MessageID=0x{:04X} ({})", obj_id, msg_id,
                     resolution.outer_name.value_or("Unknown")
                   );
+                }
+
+                if (resolution.effective_id == 0xF058) {
+                  print_kill_report(mpi_payload);
                 }
               } else {
                 std::println("  MPI Header:      failed to read object/message ids");
